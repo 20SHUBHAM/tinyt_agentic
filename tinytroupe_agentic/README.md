@@ -91,6 +91,12 @@ A complete end-to-end automation system for TinyTroupe focus group discussions w
 
 ## 📖 How to Use
 
+### Step 0: Generate and Edit Discussion Plan
+1. Enter a brief topic description in the Plan section
+2. Click "Generate Plan" to get an LLM-crafted framework (phases, goals, prompts)
+3. Edit the generated plan text if needed
+4. Click "Accept Plan & Continue" to proceed
+
 ### Step 1: Generate TinyPersons
 1. Enter a **Context Prompt** describing your target audience:
    ```
@@ -167,19 +173,22 @@ The system generates structured summaries with the following sections:
 ### Environment Variables
 
 ```bash
-# OpenAI API (Optional)
+# LLM (optional, enables dynamic, non-hardcoded agent behavior)
+LLM_PROVIDER=openai
 OPENAI_API_KEY=your_key_here
+LLM_MODEL=gpt-4o-mini
+LLM_TEMPERATURE=0.7
+LLM_MAX_RETRIES=3
 
-# Application Settings
+# App
 DEBUG=True
-SECRET_KEY=your_secret_key
-
-# Session Settings
-SESSION_TIMEOUT=3600
-
-# Logging
-LOG_LEVEL=INFO
 ```
+
+### TinyTroupe Integration
+
+- This app includes an adapter that uses the real TinyTroupe if available.
+- The PyPI package is a placeholder; install from GitHub per their README.
+- When TinyTroupe is present, `TinyPerson`, `TinyWorld`, and `control` are delegated automatically.
 
 ### Customization Options
 
@@ -192,6 +201,8 @@ LOG_LEVEL=INFO
 
 - `GET /` - Main application interface
 - `POST /generate-personas` - Generate personas from context
+- `POST /generate-plan` - Generate LLM discussion plan from topic brief
+- `POST /accept-plan` - Accept edited plan and attach to session
 - `POST /update-personas` - Update personas and topic
 - `POST /start-discussion/{session_id}` - Start automated discussion
 - `GET /session-status/{session_id}` - Get discussion status
