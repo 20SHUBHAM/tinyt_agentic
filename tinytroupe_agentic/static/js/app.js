@@ -12,7 +12,7 @@ class FocusGroupApp {
 
     init() {
         this.bindEvents();
-        this.showStep(1);
+        this.showStep(0);
     }
 
     bindEvents() {
