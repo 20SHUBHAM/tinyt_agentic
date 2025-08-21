@@ -182,6 +182,9 @@ LLM_MAX_RETRIES=3
 
 # App
 DEBUG=True
+
+# Agentic
+LLM_ONLY=false  # set true to force fully LLM-driven agentic flow
 ```
 
 ### TinyTroupe Integration

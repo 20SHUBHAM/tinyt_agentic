@@ -10,6 +10,7 @@ from datetime import datetime
 from core.tinytroupe_integration import TinyTroupeManager, TinyPerson
 from core.llm_client import LLMClient
 from core.config import llm_only
+from core.agentic_coordinator import AgenticCoordinator
 
 class DiscussionModeratorAgent:
     """Agent that moderates focus group discussions"""
@@ -18,6 +19,7 @@ class DiscussionModeratorAgent:
         self.discussion_templates = self._load_discussion_templates()
         self.moderator_persona = self._create_moderator_persona()
         self._llm = LLMClient()
+        self._coordinator = AgenticCoordinator(self._llm)
     
     def _load_discussion_templates(self) -> Dict[str, Any]:
         """Load discussion flow templates"""
@@ -149,17 +151,20 @@ class DiscussionModeratorAgent:
             pre_discussion = self._create_pre_discussion_moments(tiny_personas)
             full_transcript.extend(pre_discussion)
             
-            # Main discussion phases
-            for phase_name, questions in discussion_flow.items():
-                phase_transcript = await self._conduct_discussion_phase(
-                    phase_name, questions, tiny_personas, topic
+            # If LLM-only or coordinator available, run agentic loop; else use static phases
+            if self._llm.enabled:
+                full_transcript.extend(
+                    await self._run_agentic_loop(topic, tiny_personas, plan_text)
                 )
-                full_transcript.extend(phase_transcript)
-                
-                # Add natural transitions
-                transition = self._create_phase_transition(phase_name)
-                if transition:
-                    full_transcript.append(transition)
+            else:
+                for phase_name, questions in discussion_flow.items():
+                    phase_transcript = await self._conduct_discussion_phase(
+                        phase_name, questions, tiny_personas, topic
+                    )
+                    full_transcript.extend(phase_transcript)
+                    transition = self._create_phase_transition(phase_name)
+                    if transition:
+                        full_transcript.append(transition)
             
             # Post-discussion wrap-up
             wrap_up = self._create_post_discussion_moments(tiny_personas)
@@ -169,6 +174,77 @@ class DiscussionModeratorAgent:
             
         finally:
             tinytroupe_manager.end_session()
+
+    async def _run_agentic_loop(self, topic: str, personas: List[TinyPerson], plan_text: Optional[str]) -> List[Dict[str, Any]]:
+        transcript: List[Dict[str, Any]] = []
+        max_turns = 30
+        turn = 0
+        # initial opening by moderator
+        transcript.append({
+            "type": "phase_start",
+            "speaker": "Moderator",
+            "content": f"Let's begin our discussion about {topic}.",
+            "timestamp": datetime.now().isoformat(),
+            "phase": "agentic_flow"
+        })
+        while turn < max_turns:
+            turn += 1
+            directive = self._coordinator.propose_next_action(
+                topic=topic,
+                personas=[p.attributes | {"name": p.name} for p in personas],
+                recent_transcript=transcript,
+                plan_text=plan_text,
+            )
+            action = (directive.get("action") or "").lower()
+            if action == "end":
+                break
+            if action == "wrap_up":
+                transcript.append({
+                    "type": "wrap_up",
+                    "speaker": "Moderator",
+                    "content": "Thank you all for the insightful discussion.",
+                    "timestamp": datetime.now().isoformat()
+                })
+                break
+            if action == "ask_question":
+                q = directive.get("moderator_question") or f"Could you share more about {topic}?"
+                transcript.append({
+                    "type": "question",
+                    "speaker": "Moderator",
+                    "content": q,
+                    "timestamp": datetime.now().isoformat(),
+                    "phase": "agentic_flow"
+                })
+                # let all personas respond quickly
+                responses = await self._get_participant_responses(q, personas, topic)
+                transcript.extend(responses)
+                continue
+            if action in {"participant_turn", "interrupt"}:
+                name = directive.get("speaker")
+                target = next((p for p in personas if p.name == name), None)
+                if not target:
+                    target = personas[0]
+                prompt = f"Please share your thoughts about {topic}."
+                target.listen(prompt)
+                content = target.act()
+                transcript.append({
+                    "type": "response" if action == "participant_turn" else "interaction",
+                    "speaker": target.name,
+                    "content": content,
+                    "timestamp": datetime.now().isoformat()
+                })
+                continue
+            # default: ask a generic question
+            transcript.append({
+                "type": "question",
+                "speaker": "Moderator",
+                "content": f"What stands out to you regarding {topic}?",
+                "timestamp": datetime.now().isoformat(),
+                "phase": "agentic_flow"
+            })
+            responses = await self._get_participant_responses(f"Regarding {topic}", personas, topic)
+            transcript.extend(responses)
+        return transcript
     
     def _generate_discussion_flow(self, topic: str) -> Dict[str, List[str]]:
         """Generate discussion flow dynamically via LLM, with template fallback."""
