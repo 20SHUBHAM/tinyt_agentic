@@ -8,6 +8,7 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 from collections import Counter
 from core.llm_client import LLMClient
+from core.config import llm_only
 
 class SummaryGeneratorAgent:
     """Agent that generates comprehensive summaries of focus group discussions"""
@@ -98,9 +99,13 @@ class SummaryGeneratorAgent:
                     data.setdefault("metadata", self._generate_metadata(discussion_transcript, organized_data))
                     return data
             except Exception:
+                if llm_only():
+                    raise
                 pass
 
         # Fallback to deterministic summary
+        if llm_only():
+            raise RuntimeError("LLM_ONLY is enabled but summary generation via LLM failed.")
         summary = {
             "metadata": self._generate_metadata(discussion_transcript, organized_data),
             "objective": self._generate_objective(organized_data),

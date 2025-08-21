@@ -9,6 +9,7 @@ from typing import Dict, List, Any
 from datetime import datetime
 from collections import Counter
 from core.llm_client import LLMClient
+from core.config import llm_only
 
 class CustomSummaryGeneratorAgent:
     """Agent that generates custom summaries based on user-defined schemas"""
@@ -57,9 +58,13 @@ class CustomSummaryGeneratorAgent:
                     llm_json.setdefault("metadata", meta)
                     return llm_json
             except Exception:
+                if llm_only():
+                    raise
                 pass
 
         # Fallback: local generation per section
+        if llm_only():
+            raise RuntimeError("LLM_ONLY is enabled but custom summary generation via LLM failed.")
         custom_summary = {
             "metadata": {
                 "summary_type": "custom",

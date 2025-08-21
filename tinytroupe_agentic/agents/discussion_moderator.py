@@ -9,6 +9,7 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 from core.tinytroupe_integration import TinyTroupeManager, TinyPerson
 from core.llm_client import LLMClient
+from core.config import llm_only
 
 class DiscussionModeratorAgent:
     """Agent that moderates focus group discussions"""
@@ -108,9 +109,29 @@ class DiscussionModeratorAgent:
                     else:
                         discussion_flow = self._generate_discussion_flow(topic)
                 except Exception:
+                    if llm_only():
+                        raise
                     discussion_flow = self._generate_discussion_flow(topic)
             else:
-                discussion_flow = self._generate_discussion_flow(topic)
+                if llm_only():
+                    # Generate from topic directly via LLM when no plan provided
+                    try:
+                        system_prompt = (
+                            "Generate discussion phases for the topic with 3-4 open questions per phase as JSON."
+                        )
+                        user_prompt = f"Topic: {topic}"
+                        flow_json = self._llm.generate_json_sync(system_prompt, user_prompt, schema_hint="{phase: string[]}")
+                        if isinstance(flow_json, dict) and flow_json:
+                            discussion_flow = {}
+                            for phase, qs in flow_json.items():
+                                if isinstance(qs, list):
+                                    discussion_flow[phase] = [str(q) for q in qs if isinstance(q, (str,))]
+                        else:
+                            raise RuntimeError("Invalid LLM flow JSON")
+                    except Exception:
+                        raise
+                else:
+                    discussion_flow = self._generate_discussion_flow(topic)
             
             # Conduct discussion
             full_transcript = []

@@ -8,6 +8,7 @@ import random
 from typing import Dict, List, Any
 from datetime import datetime
 from core.llm_client import LLMClient
+from core.config import llm_only
 
 class PersonaGeneratorAgent:
     """Agent responsible for generating diverse, realistic personas"""
@@ -88,9 +89,14 @@ class PersonaGeneratorAgent:
                     if normalized:
                         return normalized[:num_personas]
             except Exception:
+                if llm_only():
+                    raise
                 pass
         
         # Fallback to template-driven generation
+        if llm_only():
+            # Enforce LLM-only behavior
+            raise RuntimeError("LLM_ONLY is enabled but LLM generation for personas failed.")
         context_analysis = self._analyze_context(context_prompt, discussion_topic)
         personas: List[Dict[str, Any]] = []
         used_names = set()
