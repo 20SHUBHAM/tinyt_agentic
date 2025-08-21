@@ -297,6 +297,54 @@ async def generate_plan(request: PlanRequest):
             research_goals=request.research_goals,
         )
 
+        # Render a backward-compatible text version for existing UI
+        def _render_plan_text(fw: Dict) -> str:
+            lines = []
+            lines.append("Discussion Framework\n")
+            if fw.get("research_objectives"):
+                lines.append("Research Objectives:")
+                for o in fw["research_objectives"]:
+                    lines.append(f"- {o}")
+                lines.append("")
+            if fw.get("discussion_phases"):
+                lines.append("Discussion Phases:")
+                for ph in fw["discussion_phases"]:
+                    name = ph.get("name", "Phase")
+                    obj = ph.get("objective", "")
+                    lines.append(f"- {name}: {obj}")
+                    for q in ph.get("questions", [])[:3]:
+                        lines.append(f"  • {q}")
+                lines.append("")
+            if fw.get("key_questions"):
+                lines.append("Key Questions:")
+                for q in fw["key_questions"]:
+                    lines.append(f"- {q}")
+                lines.append("")
+            pc = fw.get("participant_criteria") or {}
+            if pc:
+                lines.append("Participant Criteria:")
+                for k, arr in pc.items():
+                    if isinstance(arr, list) and arr:
+                        lines.append(f"- {k.title()}: {', '.join(arr)}")
+                lines.append("")
+            if fw.get("business_context"):
+                lines.append("Business Context:")
+                lines.append(fw["business_context"])
+                lines.append("")
+            if fw.get("expected_insights"):
+                lines.append("Expected Insights:")
+                for it in fw["expected_insights"]:
+                    lines.append(f"- {it}")
+                lines.append("")
+            if fw.get("success_metrics"):
+                lines.append("Success Metrics:")
+                for it in fw["success_metrics"]:
+                    lines.append(f"- {it}")
+                lines.append("")
+            return "\n".join(lines).strip()
+
+        plan_text = _render_plan_text(framework)
+
         session_data = {
             "session_id": session_id,
             "topic_brief": topic_brief,
@@ -306,7 +354,7 @@ async def generate_plan(request: PlanRequest):
         }
         session_manager.create_session(session_id, session_data)
 
-        return {"success": True, "session_id": session_id, "framework": framework, "topic_brief": topic_brief}
+        return {"success": True, "session_id": session_id, "framework": framework, "plan_text": plan_text, "topic_brief": topic_brief}
     except HTTPException:
         raise
     except Exception as e:
