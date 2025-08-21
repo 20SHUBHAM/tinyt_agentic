@@ -49,10 +49,13 @@ class QARequest(BaseModel):
 
 class PlanRequest(BaseModel):
     topic_brief: str
+    business_context: Optional[str] = None
+    research_goals: Optional[str] = None
 
 class AcceptPlanRequest(BaseModel):
     session_id: str
-    plan_text: str
+    plan_text: Optional[str] = None
+    framework: Optional[Dict] = None
     discussion_topic: Optional[str] = None
 
 @app.get("/", response_class=HTMLResponse)
@@ -285,30 +288,25 @@ async def generate_plan(request: PlanRequest):
         if not topic_brief:
             raise HTTPException(status_code=400, detail="topic_brief required")
 
-        if llm.enabled:
-            system_prompt = (
-                "You are a senior research moderator. Given a short topic brief, create a clear, editable "
-                "discussion framework (markdown) with phases, goals, and example prompts. Keep it concise."
-            )
-            user_prompt = f"Topic brief: {topic_brief}\nConstraints: Keep under 350 words."
-            plan_text = llm.generate_text_sync(system_prompt, user_prompt, temperature=0.5, max_tokens=500)
-        else:
-            plan_text = (
-                f"Discussion Framework for: {topic_brief}\n\n"
-                "Phases:\n- Opening & context setting\n- Experience sharing\n- Deep dive on pain points\n- Comparison & trade‑offs\n- Wrap‑up & next steps\n\n"
-                "Each phase: 2–3 open questions, encourage cross‑talk, capture quotes."
-            )
+        # Use framework agent to build structured framework
+        from agents.discussion_framework_agent import DiscussionFrameworkAgent
+        fw_agent = DiscussionFrameworkAgent()
+        framework = fw_agent.generate_framework(
+            topic_brief=topic_brief,
+            business_context=request.business_context,
+            research_goals=request.research_goals,
+        )
 
         session_data = {
             "session_id": session_id,
             "topic_brief": topic_brief,
-            "discussion_plan": plan_text,
+            "discussion_plan": framework,
             "status": "plan_generated",
             "created_at": datetime.now().isoformat()
         }
         session_manager.create_session(session_id, session_data)
 
-        return {"success": True, "session_id": session_id, "plan_text": plan_text, "topic_brief": topic_brief}
+        return {"success": True, "session_id": session_id, "framework": framework, "topic_brief": topic_brief}
     except HTTPException:
         raise
     except Exception as e:
@@ -321,7 +319,10 @@ async def accept_plan(request: AcceptPlanRequest):
         if not session_data:
             raise HTTPException(status_code=404, detail="Session not found")
         # Update plan and optionally discussion topic
-        session_data["discussion_plan"] = request.plan_text
+        if request.framework is not None:
+            session_data["discussion_plan"] = request.framework
+        elif request.plan_text is not None:
+            session_data["discussion_plan"] = request.plan_text
         if request.discussion_topic:
             session_data["discussion_topic"] = request.discussion_topic
         session_data["status"] = "plan_accepted"
