@@ -8,6 +8,7 @@ import asyncio
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from core.tinytroupe_integration import TinyTroupeManager, TinyPerson
+from core.llm_client import LLMClient
 
 class DiscussionModeratorAgent:
     """Agent that moderates focus group discussions"""
@@ -15,6 +16,7 @@ class DiscussionModeratorAgent:
     def __init__(self):
         self.discussion_templates = self._load_discussion_templates()
         self.moderator_persona = self._create_moderator_persona()
+        self._llm = LLMClient()
     
     def _load_discussion_templates(self) -> Dict[str, Any]:
         """Load discussion flow templates"""
@@ -127,11 +129,40 @@ class DiscussionModeratorAgent:
             tinytroupe_manager.end_session()
     
     def _generate_discussion_flow(self, topic: str) -> Dict[str, List[str]]:
-        """Generate discussion flow based on topic"""
-        
-        flow = {}
-        
-        # Customize questions based on topic
+        """Generate discussion flow dynamically via LLM, with template fallback."""
+
+        if self._llm.enabled:
+            system_prompt = (
+                "You are an expert focus group moderator. Given a topic, generate a structured "
+                "set of phases with 3-4 open-ended, non-leading questions per phase."
+            )
+            user_prompt = (
+                f"Topic: {topic}\n"
+                "Phases: opening_questions, exploration_questions, deep_dive_questions, comparison_questions, future_focused_questions, wrap_up_questions.\n"
+                "Return JSON with those exact keys and list of strings as values."
+            )
+            try:
+                flow = self._llm.generate_json_sync(system_prompt, user_prompt, schema_hint="{phase: string[]}")
+                # Validate basic structure
+                if isinstance(flow, dict) and any(isinstance(v, list) for v in flow.values()):
+                    # Ensure formatting for {topic}
+                    normalized: Dict[str, List[str]] = {}
+                    for phase, questions in flow.items():
+                        if not isinstance(questions, list):
+                            continue
+                        customized_questions: List[str] = []
+                        for q in questions:
+                            if isinstance(q, str):
+                                customized_questions.append(q.replace("{topic}", topic))
+                        if customized_questions:
+                            normalized[phase] = customized_questions
+                    if normalized:
+                        return normalized
+            except Exception:
+                pass
+
+        # Fallback to templated questions
+        flow: Dict[str, List[str]] = {}
         for phase, question_templates in self.discussion_templates.items():
             customized_questions = []
             for template in question_templates:
@@ -140,7 +171,6 @@ class DiscussionModeratorAgent:
                 else:
                     customized_questions.append(template)
             flow[phase] = customized_questions
-        
         return flow
     
     def _create_pre_discussion_moments(self, personas: List[TinyPerson]) -> List[Dict[str, Any]]:

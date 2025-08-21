@@ -7,12 +7,14 @@ import json
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from collections import Counter
+from core.llm_client import LLMClient
 
 class SummaryGeneratorAgent:
     """Agent that generates comprehensive summaries of focus group discussions"""
     
     def __init__(self):
         self.summary_schema = self._load_summary_schema()
+        self._llm = LLMClient()
     
     def _load_summary_schema(self) -> Dict[str, Any]:
         """Load the predefined summary schema - 6 section format"""
@@ -71,12 +73,34 @@ class SummaryGeneratorAgent:
         }
     
     async def generate_summary(self, discussion_transcript: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Generate comprehensive summary based on predefined schema"""
-        
-        # Extract and organize data from transcript
+        """Generate comprehensive summary; prefer LLM-driven dynamic summary with fallback."""
+
         organized_data = self._organize_transcript_data(discussion_transcript)
-        
-        # Generate each section of the summary following the 6-section format
+
+        # LLM-first dynamic summary
+        if self._llm.enabled:
+            system_prompt = (
+                "You are an insights analyst. Create a concise, structured summary from a focus group transcript. "
+                "Output JSON with keys: objective (string), participants (object), key_insights (string[]), "
+                "supporting_quotes ({speaker, quote}[]), opportunities_recommendations (string[]), next_steps (string[])."
+            )
+            transcript_text = "\n".join(
+                f"[{e.get('speaker','')}|{e.get('type','')}] {e.get('content','')}" for e in discussion_transcript[:800]
+            )
+            user_prompt = (
+                "Transcript excerpt (truncated):\n" + transcript_text + "\n\n"
+                "Ensure brevity and specificity."
+            )
+            try:
+                data = self._llm.generate_json_sync(system_prompt, user_prompt, schema_hint="summary object")
+                if isinstance(data, dict) and data:
+                    data.setdefault("generated_at", datetime.now().isoformat())
+                    data.setdefault("metadata", self._generate_metadata(discussion_transcript, organized_data))
+                    return data
+            except Exception:
+                pass
+
+        # Fallback to deterministic summary
         summary = {
             "metadata": self._generate_metadata(discussion_transcript, organized_data),
             "objective": self._generate_objective(organized_data),
@@ -87,7 +111,6 @@ class SummaryGeneratorAgent:
             "next_steps": self._generate_next_steps(organized_data),
             "generated_at": datetime.now().isoformat()
         }
-        
         return summary
     
     def _organize_transcript_data(self, transcript: List[Dict[str, Any]]) -> Dict[str, Any]:

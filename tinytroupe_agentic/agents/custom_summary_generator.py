@@ -8,12 +8,13 @@ import re
 from typing import Dict, List, Any
 from datetime import datetime
 from collections import Counter
+from core.llm_client import LLMClient
 
 class CustomSummaryGeneratorAgent:
     """Agent that generates custom summaries based on user-defined schemas"""
     
     def __init__(self):
-        pass
+        self._llm = LLMClient()
     
     async def generate_custom_summary(self, transcript: List[Dict[str, Any]], 
                                     personas: List[Dict[str, Any]], 
@@ -27,7 +28,38 @@ class CustomSummaryGeneratorAgent:
         # Parse user schema to understand requirements
         schema_sections = self._parse_schema(schema)
         
-        # Generate custom summary sections
+        # LLM-first: attempt to directly produce the custom-structured JSON
+        if self._llm.enabled and schema_sections:
+            system_prompt = (
+                "You are an insights analyst. Given a transcript, personas, and a user-defined outline, "
+                "produce a JSON object whose keys are derived from the outline entries (underscored)."
+            )
+            schema_list = "\n".join(s.get("original_line", s.get("title", "")) for s in schema_sections)
+            transcript_text = "\n".join(
+                f"[{e.get('speaker','')}|{e.get('type','')}] {e.get('content','')}" for e in transcript[:800]
+            )
+            user_prompt = (
+                f"Outline lines (keep order):\n{schema_list}\n\n"
+                f"Personas count: {len(personas)}\nTopic: {topic}\n\n"
+                f"Transcript excerpt (truncated):\n{transcript_text}\n\n"
+                "Return STRICT JSON only."
+            )
+            try:
+                llm_json = self._llm.generate_json_sync(system_prompt, user_prompt, schema_hint="arbitrary keyed object")
+                if isinstance(llm_json, dict) and llm_json:
+                    meta = {
+                        "summary_type": "custom",
+                        "user_schema": schema,
+                        "generated_at": datetime.now().isoformat(),
+                        "total_participants": len(personas),
+                        "discussion_topic": topic
+                    }
+                    llm_json.setdefault("metadata", meta)
+                    return llm_json
+            except Exception:
+                pass
+
+        # Fallback: local generation per section
         custom_summary = {
             "metadata": {
                 "summary_type": "custom",
@@ -37,14 +69,11 @@ class CustomSummaryGeneratorAgent:
                 "discussion_topic": topic
             }
         }
-        
-        # Generate each section based on user requirements
         for section in schema_sections:
             section_content = await self._generate_section_content(
                 section, organized_data, transcript, personas
             )
             custom_summary[section["key"]] = section_content
-        
         return custom_summary
     
     def _organize_transcript_data(self, transcript: List[Dict[str, Any]], 

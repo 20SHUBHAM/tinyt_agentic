@@ -9,6 +9,7 @@ import random
 import time
 from datetime import datetime
 from typing import Dict, List, Any, Optional
+from core.llm_client import LLMClient
 
 class TinyPerson:
     """Simplified TinyPerson implementation for the agentic system"""
@@ -17,6 +18,7 @@ class TinyPerson:
         self.name = name
         self.attributes = {}
         self.conversation_history = []
+        self._llm = LLMClient()
     
     def define(self, key: str, value: Any):
         """Define an attribute for this person"""
@@ -28,18 +30,41 @@ class TinyPerson:
     
     def act(self) -> str:
         """Generate a response based on personality and context"""
-        # This would integrate with your AI model (OpenAI, etc.)
-        # For now, returning a realistic simulation
-        
+        # Prefer LLM-driven dynamic response; fall back to template simulation
         if not self.conversation_history:
             return f"Hi, I'm {self.name}!"
-        
+
         last_prompt = self.conversation_history[-1]["content"]
-        
-        # Generate contextual response based on persona attributes
-        response = self._generate_response(last_prompt)
+
+        if self._llm.enabled:
+            system_prompt = (
+                "You are a realistic focus group participant. Speak naturally, briefly (2-4 sentences), "
+                "and in first person. Stay consistent with the provided persona attributes."
+            )
+            persona_json = json.dumps(self.attributes, ensure_ascii=False)
+            history_snippets = []
+            for msg in self.conversation_history[-6:]:  # last few turns
+                role = msg.get("type", "listen")
+                content = msg.get("content", "")
+                history_snippets.append(f"{role}: {content}")
+            history_text = "\n".join(history_snippets)
+            user_prompt = (
+                f"Persona name: {self.name}\n"
+                f"Persona attributes (JSON): {persona_json}\n"
+                f"Recent history:\n{history_text}\n\n"
+                f"Respond to the latest moderator question or group message above."
+            )
+            try:
+                response = self._llm.generate_text_sync(system_prompt, user_prompt, temperature=0.8, max_tokens=180)
+                response = (response or "").strip()
+                if not response:
+                    response = self._generate_response(last_prompt)
+            except Exception:
+                response = self._generate_response(last_prompt)
+        else:
+            response = self._generate_response(last_prompt)
+
         self.conversation_history.append({"type": "act", "content": response, "timestamp": datetime.now().isoformat()})
-        
         return response
     
     def _generate_response(self, prompt: str) -> str:

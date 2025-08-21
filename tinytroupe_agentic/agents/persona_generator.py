@@ -7,12 +7,14 @@ import json
 import random
 from typing import Dict, List, Any
 from datetime import datetime
+from core.llm_client import LLMClient
 
 class PersonaGeneratorAgent:
     """Agent responsible for generating diverse, realistic personas"""
     
     def __init__(self):
         self.persona_templates = self._load_persona_templates()
+        self._llm = LLMClient()
     
     def _load_persona_templates(self) -> Dict[str, Any]:
         """Load persona generation templates"""
@@ -54,17 +56,48 @@ class PersonaGeneratorAgent:
     async def generate_personas(self, context_prompt: str, discussion_topic: str, num_personas: int = 6) -> List[Dict[str, Any]]:
         """Generate diverse personas based on context prompt"""
         
-        # Parse context prompt to understand requirements
+        # Try LLM-first approach for dynamic, topic-aware personas
+        if self._llm.enabled:
+            system_prompt = (
+                "You are generating realistic participant personas for a focus group. "
+                "Return a JSON array of personas with keys: name, age, occupation, location, "
+                "income_range, monthly_budget, personality_type, traits (string[]), background."
+            )
+            user_prompt = (
+                f"Context prompt: {context_prompt}\n"
+                f"Topic: {discussion_topic}\n"
+                f"Count: {num_personas}\n"
+                "Ensure diversity in age, occupation, location, income and personality_type."
+            )
+            try:
+                data = self._llm.generate_json_sync(system_prompt, user_prompt, schema_hint="Persona[]")
+                if isinstance(data, list) and data:
+                    # Basic normalization and timestamps
+                    normalized: List[Dict[str, Any]] = []
+                    used_names = set()
+                    for p in data:
+                        if not isinstance(p, dict):
+                            continue
+                        name = p.get("name") or f"Person_{len(normalized)+1}"
+                        if name in used_names:
+                            name = f"{name}_{len(normalized)+1}"
+                        used_names.add(name)
+                        p["name"] = name
+                        p.setdefault("created_at", datetime.now().isoformat())
+                        normalized.append(p)
+                    if normalized:
+                        return normalized[:num_personas]
+            except Exception:
+                pass
+        
+        # Fallback to template-driven generation
         context_analysis = self._analyze_context(context_prompt, discussion_topic)
-        
-        personas = []
+        personas: List[Dict[str, Any]] = []
         used_names = set()
-        
         for i in range(num_personas):
             persona = self._create_individual_persona(context_analysis, used_names)
             personas.append(persona)
             used_names.add(persona["name"])
-        
         return personas
     
     def _analyze_context(self, context_prompt: str, discussion_topic: str) -> Dict[str, Any]:

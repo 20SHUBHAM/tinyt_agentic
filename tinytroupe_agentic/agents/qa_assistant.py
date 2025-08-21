@@ -6,6 +6,7 @@ Interactive assistant for answering questions about focus group discussions
 import json
 from typing import Dict, List, Any, Optional
 from datetime import datetime
+from core.llm_client import LLMClient
 
 class QAAssistantAgent:
     """Agent that provides interactive Q&A capabilities over discussion transcripts"""
@@ -13,6 +14,7 @@ class QAAssistantAgent:
     def __init__(self):
         self.question_categories = self._load_question_categories()
         self.context_memory = {}
+        self._llm = LLMClient()
     
     def _load_question_categories(self) -> Dict[str, List[str]]:
         """Load common question categories and templates"""
@@ -56,25 +58,53 @@ class QAAssistantAgent:
     
     async def answer_question(self, question: str, transcript: List[Dict[str, Any]], 
                             summary: Dict[str, Any], personas: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Answer a question based on discussion data"""
-        
-        # Categorize the question
+        """Answer a question based on discussion data. Prefer LLM, fallback to rules."""
+
         question_category = self._categorize_question(question)
-        
-        # Extract relevant context
         context = self._extract_relevant_context(question, transcript, summary, personas)
-        
-        # Generate answer based on category and context
+
+        if self._llm.enabled:
+            system_prompt = (
+                "You are a Q&A assistant over a focus group transcript and its summary. "
+                "Answer succinctly (2-6 bullet points or short paragraph), cite participants by name, and stay grounded."
+            )
+            transcript_snip = "\n".join(
+                f"[{e.get('speaker','')}|{e.get('type','')}] {e.get('content','')}" for e in transcript[:600]
+            )
+            summary_text = json.dumps(summary)[:4000]
+            user_prompt = (
+                f"Question: {question}\nCategory: {question_category}\n\n"
+                f"Transcript excerpt (truncated):\n{transcript_snip}\n\n"
+                f"Summary (truncated JSON):\n{summary_text}\n\n"
+                "Respond clearly."
+            )
+            try:
+                answer_text = self._llm.generate_text_sync(system_prompt, user_prompt, temperature=0.4, max_tokens=220)
+                if answer_text:
+                    result = {
+                        "answer": answer_text,
+                        "category": question_category,
+                        "confidence": "high",
+                        "source_type": "llm"
+                    }
+                    self.context_memory[question] = {
+                        "answer": result,
+                        "category": question_category,
+                        "context": context,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    return result
+            except Exception:
+                pass
+
+        # Fallback to deterministic logic
         answer = self._generate_answer(question, question_category, context, transcript, summary, personas)
-        
-        # Store in memory for follow-up questions
         self.context_memory[question] = {
             "answer": answer,
             "category": question_category,
             "context": context,
             "timestamp": datetime.now().isoformat()
         }
-        
         return answer
     
     def _categorize_question(self, question: str) -> str:
