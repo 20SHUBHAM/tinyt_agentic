@@ -11,31 +11,69 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional
 from core.llm_client import LLMClient
 
+_HAS_TINYTROUPE = False
+try:
+    import tinytroupe  # type: ignore
+    from tinytroupe.agent import TinyPerson as TTinyPerson  # type: ignore
+    try:
+        from tinytroupe.environment import TinyWorld as TTinyWorld  # type: ignore
+    except Exception:  # pragma: no cover
+        TTinyWorld = None  # type: ignore
+    try:
+        from tinytroupe import control as TControl  # type: ignore
+    except Exception:  # pragma: no cover
+        TControl = None  # type: ignore
+    _HAS_TINYTROUPE = True
+except Exception:
+    _HAS_TINYTROUPE = False
+
 class TinyPerson:
-    """Simplified TinyPerson implementation for the agentic system"""
-    
+    """Abstraction over participant agent.
+
+    Uses tinytroupe.agent.TinyPerson if available; otherwise a local stub with
+    LLM-driven responses.
+    """
+
     def __init__(self, name: str):
         self.name = name
-        self.attributes = {}
-        self.conversation_history = []
+        self.attributes: Dict[str, Any] = {}
+        self.conversation_history: List[Dict[str, Any]] = []
         self._llm = LLMClient()
+        self._impl = TTinyPerson(name) if _HAS_TINYTROUPE else None
     
     def define(self, key: str, value: Any):
-        """Define an attribute for this person"""
+        """Define an attribute for this person (and underlying tinytroupe if present)"""
         self.attributes[key] = value
+        if self._impl is not None:
+            try:
+                self._impl.define(key, value)
+            except Exception:
+                pass
     
     def listen(self, message: str):
         """Listen to a message/prompt"""
         self.conversation_history.append({"type": "listen", "content": message, "timestamp": datetime.now().isoformat()})
+        if self._impl is not None:
+            try:
+                self._impl.listen(message)
+            except Exception:
+                pass
     
     def act(self) -> str:
         """Generate a response based on personality and context"""
-        # Prefer LLM-driven dynamic response; fall back to template simulation
+        if self._impl is not None:
+            try:
+                response = self._impl.act()
+                if response:
+                    self.conversation_history.append({"type": "act", "content": response, "timestamp": datetime.now().isoformat()})
+                    return response
+            except Exception:
+                pass
+
+        # Local LLM-driven fallback
         if not self.conversation_history:
             return f"Hi, I'm {self.name}!"
-
         last_prompt = self.conversation_history[-1]["content"]
-
         if self._llm.enabled:
             system_prompt = (
                 "You are a realistic focus group participant. Speak naturally, briefly (2-4 sentences), "
@@ -43,7 +81,7 @@ class TinyPerson:
             )
             persona_json = json.dumps(self.attributes, ensure_ascii=False)
             history_snippets = []
-            for msg in self.conversation_history[-6:]:  # last few turns
+            for msg in self.conversation_history[-6:]:
                 role = msg.get("type", "listen")
                 content = msg.get("content", "")
                 history_snippets.append(f"{role}: {content}")
@@ -105,17 +143,25 @@ class TinyPerson:
         return random.choice(responses)
 
 class TinyWorld:
-    """Simplified TinyWorld implementation"""
-    
+    """Abstraction over environment/world. Uses tinytroupe if available."""
+
     def __init__(self, name: str, agents: List[TinyPerson]):
         self.name = name
         self.agents = agents
-        self.conversation_log = []
-    
+        self.conversation_log: List[Dict[str, Any]] = []
+        self._impl = None
+        if _HAS_TINYTROUPE and 'TTinyWorld' in globals() and TTinyWorld is not None:
+            try:
+                # Convert to underlying tinytroupe TinyPerson instances
+                ttagents = [a._impl if getattr(a, "_impl", None) is not None else a for a in agents]
+                self._impl = TTinyWorld(name, ttagents)
+            except Exception:
+                self._impl = None
+
     def run_conversation(self, topic: str, questions: List[str]) -> List[Dict[str, Any]]:
-        """Run a conversation between agents"""
-        conversation = []
-        
+        conversation: List[Dict[str, Any]] = []
+        # Drive via our question loop to preserve deterministic structure,
+        # leveraging tinytroupe persons' listen/act behavior.
         for question in questions:
             conversation.append({
                 "type": "moderator",
@@ -123,22 +169,16 @@ class TinyWorld:
                 "content": question,
                 "timestamp": datetime.now().isoformat()
             })
-            
-            # Each agent responds
             for agent in self.agents:
                 agent.listen(f"Question: {question}")
                 response = agent.act()
-                
                 conversation.append({
                     "type": "participant",
                     "speaker": agent.name,
                     "content": response,
                     "timestamp": datetime.now().isoformat()
                 })
-                
-                # Add some realistic delays
-                time.sleep(0.1)
-        
+                time.sleep(0.05)
         self.conversation_log = conversation
         return conversation
 
@@ -153,14 +193,28 @@ class ControlManager:
         """Begin a session"""
         self.session_active = True
         self.cache_file = cache_filename
+        if _HAS_TINYTROUPE and 'TControl' in globals() and TControl is not None:
+            try:
+                TControl.begin(cache_filename)
+            except Exception:
+                pass
     
     def checkpoint(self):
         """Create a checkpoint"""
-        pass
+        if _HAS_TINYTROUPE and 'TControl' in globals() and TControl is not None:
+            try:
+                TControl.checkpoint()
+            except Exception:
+                pass
     
     def end(self):
         """End the session"""
         self.session_active = False
+        if _HAS_TINYTROUPE and 'TControl' in globals() and TControl is not None:
+            try:
+                TControl.end()
+            except Exception:
+                pass
 
 class TinyTroupeManager:
     """Main manager for TinyTroupe integration"""
