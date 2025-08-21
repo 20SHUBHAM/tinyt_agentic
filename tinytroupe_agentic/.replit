@@ -1,0 +1,22 @@
+[build]
+run = "pip install -r requirements.txt"
+
+[run]
+command = "python main.py"
+
+[nix]
+channel = "stable-22_11"
+
+[deployment]
+run = ["sh", "-c", "python main.py"]
+
+[languages]
+
+[languages.python]
+pattern = "**/*.py"
+[languages.python.languageServer]
+start = "pylsp"
+
+[[ports]]
+localPort = 8000
+externalPort = 80
