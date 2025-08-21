@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 import asyncio
 from pydantic import BaseModel
+from core.llm_client import LLMClient
 
 # Import our custom agents
 from agents.persona_generator import PersonaGeneratorAgent
@@ -35,6 +36,7 @@ session_manager = SessionManager()
 class PersonaRequest(BaseModel):
     context_prompt: str
     discussion_topic: str
+    session_id: Optional[str] = None
 
 class EditPersonasRequest(BaseModel):
     session_id: str
@@ -45,6 +47,14 @@ class QARequest(BaseModel):
     session_id: str
     question: str
 
+class PlanRequest(BaseModel):
+    topic_brief: str
+
+class AcceptPlanRequest(BaseModel):
+    session_id: str
+    plan_text: str
+    discussion_topic: Optional[str] = None
+
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Main application page"""
@@ -54,8 +64,8 @@ async def home(request: Request):
 async def generate_personas(request: PersonaRequest):
     """Step 1: Generate TinyPersons based on context prompt"""
     try:
-        # Create new session
-        session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        # Create or reuse session
+        session_id = request.session_id or f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
         # Initialize persona generator agent
         persona_agent = PersonaGeneratorAgent()
@@ -66,17 +76,21 @@ async def generate_personas(request: PersonaRequest):
             discussion_topic=request.discussion_topic
         )
         
-        # Store session data
-        session_data = {
+        # Store or update session data
+        session_data = session_manager.get_session(session_id) or {}
+        session_data.update({
             "session_id": session_id,
             "context_prompt": request.context_prompt,
             "discussion_topic": request.discussion_topic,
             "personas": personas,
-            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
             "status": "personas_generated"
-        }
+        })
         
-        session_manager.create_session(session_id, session_data)
+        if not session_manager.get_session(session_id):
+            session_manager.create_session(session_id, session_data)
+        else:
+            session_manager.update_session(session_id, session_data)
         
         return {
             "success": True,
@@ -138,10 +152,12 @@ async def run_discussion(session_id: str, session_data: Dict, moderator: Discuss
     """Run the complete discussion workflow"""
     try:
         # Execute discussion
+        plan_text = session_data.get("discussion_plan")
         discussion_transcript = await moderator.conduct_discussion(
             personas=session_data["personas"],
             topic=session_data["discussion_topic"],
-            tinytroupe_manager=tinytroupe_manager
+            tinytroupe_manager=tinytroupe_manager,
+            plan_text=plan_text
         )
         
         # Update session with transcript
@@ -258,6 +274,64 @@ async def generate_custom_summary(request: CustomSummaryRequest):
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+
+# New: Plan generation endpoints
+@app.post("/generate-plan")
+async def generate_plan(request: PlanRequest):
+    try:
+        session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        llm = LLMClient()
+        topic_brief = request.topic_brief.strip()
+        if not topic_brief:
+            raise HTTPException(status_code=400, detail="topic_brief required")
+
+        if llm.enabled:
+            system_prompt = (
+                "You are a senior research moderator. Given a short topic brief, create a clear, editable "
+                "discussion framework (markdown) with phases, goals, and example prompts. Keep it concise."
+            )
+            user_prompt = f"Topic brief: {topic_brief}\nConstraints: Keep under 350 words."
+            plan_text = llm.generate_text_sync(system_prompt, user_prompt, temperature=0.5, max_tokens=500)
+        else:
+            plan_text = (
+                f"Discussion Framework for: {topic_brief}\n\n"
+                "Phases:\n- Opening & context setting\n- Experience sharing\n- Deep dive on pain points\n- Comparison & trade‑offs\n- Wrap‑up & next steps\n\n"
+                "Each phase: 2–3 open questions, encourage cross‑talk, capture quotes."
+            )
+
+        session_data = {
+            "session_id": session_id,
+            "topic_brief": topic_brief,
+            "discussion_plan": plan_text,
+            "status": "plan_generated",
+            "created_at": datetime.now().isoformat()
+        }
+        session_manager.create_session(session_id, session_data)
+
+        return {"success": True, "session_id": session_id, "plan_text": plan_text, "topic_brief": topic_brief}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating plan: {str(e)}")
+
+@app.post("/accept-plan")
+async def accept_plan(request: AcceptPlanRequest):
+    try:
+        session_data = session_manager.get_session(request.session_id)
+        if not session_data:
+            raise HTTPException(status_code=404, detail="Session not found")
+        # Update plan and optionally discussion topic
+        session_data["discussion_plan"] = request.plan_text
+        if request.discussion_topic:
+            session_data["discussion_topic"] = request.discussion_topic
+        session_data["status"] = "plan_accepted"
+        session_data["updated_at"] = datetime.now().isoformat()
+        session_manager.update_session(request.session_id, session_data)
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error accepting plan: {str(e)}")
 
 if __name__ == "__main__":
     # Ensure directories exist

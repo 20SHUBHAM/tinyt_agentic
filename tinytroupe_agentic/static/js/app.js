@@ -6,6 +6,7 @@ class FocusGroupApp {
         this.currentPersonas = [];
         this.currentTopic = '';
         this.discussionPollingInterval = null;
+        this.currentPlanText = '';
         this.init();
     }
 
@@ -15,6 +16,15 @@ class FocusGroupApp {
     }
 
     bindEvents() {
+        // Step 0: Plan Generation
+        document.getElementById('generate-plan-btn').addEventListener('click', () => {
+            this.generatePlan();
+        });
+
+        document.getElementById('accept-plan-btn').addEventListener('click', () => {
+            this.acceptPlan();
+        });
+
         // Step 1: Persona Generation
         document.getElementById('persona-form').addEventListener('submit', (e) => {
             e.preventDefault();
@@ -52,7 +62,7 @@ class FocusGroupApp {
 
     showStep(stepNumber) {
         // Hide all steps
-        for (let i = 1; i <= 4; i++) {
+        for (let i = 0; i <= 4; i++) {
             const card = document.getElementById(`step${i}-card`);
             if (card) {
                 card.classList.add('d-none');
@@ -67,7 +77,7 @@ class FocusGroupApp {
         }
 
         // Scroll to step
-        if (stepNumber > 1) {
+        if (stepNumber > 0) {
             currentCard.scrollIntoView({ behavior: 'smooth' });
         }
     }
@@ -81,6 +91,65 @@ class FocusGroupApp {
 
     hideLoading() {
         document.getElementById('loading-overlay').classList.add('d-none');
+    }
+
+    async generatePlan() {
+        const brief = document.getElementById('topic-brief').value.trim();
+        if (!brief) {
+            this.showAlert('Please enter a brief topic description.', 'warning');
+            return;
+        }
+        this.showLoading('Generating discussion plan...');
+        try {
+            const res = await fetch('/generate-plan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ topic_brief: brief })
+            });
+            const data = await res.json();
+            if (data.success) {
+                this.currentSessionId = data.session_id;
+                this.currentPlanText = data.plan_text;
+                document.getElementById('generated-plan').value = data.plan_text;
+                this.showAlert('Plan generated. You can edit it before continuing.', 'success');
+            } else {
+                this.showAlert('Failed to generate plan.', 'danger');
+            }
+        } catch (e) {
+            console.error(e);
+            this.showAlert('Network error while generating plan.', 'danger');
+        } finally {
+            this.hideLoading();
+        }
+    }
+
+    async acceptPlan() {
+        const planText = document.getElementById('generated-plan').value.trim();
+        const topicBrief = document.getElementById('topic-brief').value.trim();
+        if (!this.currentSessionId) {
+            // If plan not generated yet, generate it first
+            await this.generatePlan();
+        }
+        if (!this.currentSessionId) {
+            this.showAlert('Could not create a session for the plan.', 'danger');
+            return;
+        }
+        this.showLoading('Saving plan and moving to personas...');
+        try {
+            await fetch('/accept-plan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: this.currentSessionId, plan_text: planText, discussion_topic: topicBrief })
+            });
+            // preload topic into persona form
+            document.getElementById('discussion-topic').value = topicBrief;
+            this.showStep(1);
+        } catch (e) {
+            console.error(e);
+            this.showAlert('Failed to save plan.', 'danger');
+        } finally {
+            this.hideLoading();
+        }
     }
 
     async generatePersonas() {
@@ -102,7 +171,8 @@ class FocusGroupApp {
                 },
                 body: JSON.stringify({
                     context_prompt: contextPrompt,
-                    discussion_topic: discussionTopic
+                    discussion_topic: discussionTopic,
+                    session_id: this.currentSessionId
                 })
             });
 

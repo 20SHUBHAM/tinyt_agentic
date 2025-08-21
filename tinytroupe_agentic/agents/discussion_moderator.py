@@ -74,7 +74,7 @@ class DiscussionModeratorAgent:
         }
     
     async def conduct_discussion(self, personas: List[Dict[str, Any]], topic: str, 
-                               tinytroupe_manager: TinyTroupeManager) -> List[Dict[str, Any]]:
+                               tinytroupe_manager: TinyTroupeManager, plan_text: Optional[str] = None) -> List[Dict[str, Any]]:
         """Conduct a complete focus group discussion"""
         
         # Initialize session
@@ -89,7 +89,28 @@ class DiscussionModeratorAgent:
             world = tinytroupe_manager.create_world("Focus Group Discussion", tiny_personas)
             
             # Generate discussion flow
-            discussion_flow = self._generate_discussion_flow(topic)
+            if plan_text and self._llm.enabled:
+                # Ask LLM to translate plan text to phases/questions
+                from core.llm_client import LLMClient
+                llm = self._llm
+                system_prompt = (
+                    "You are a focus group moderator. Convert the following plan into a JSON object "
+                    "with keys (phase slugs) -> list of 2-4 open-ended questions."
+                )
+                user_prompt = f"Plan:\n{plan_text}\n\nTopic: {topic}"
+                try:
+                    flow_json = llm.generate_json_sync(system_prompt, user_prompt, schema_hint="{phase: string[]}")
+                    if isinstance(flow_json, dict) and flow_json:
+                        discussion_flow = {}
+                        for phase, qs in flow_json.items():
+                            if isinstance(qs, list):
+                                discussion_flow[phase] = [str(q).replace("{topic}", topic) for q in qs if isinstance(q, (str,))]
+                    else:
+                        discussion_flow = self._generate_discussion_flow(topic)
+                except Exception:
+                    discussion_flow = self._generate_discussion_flow(topic)
+            else:
+                discussion_flow = self._generate_discussion_flow(topic)
             
             # Conduct discussion
             full_transcript = []
