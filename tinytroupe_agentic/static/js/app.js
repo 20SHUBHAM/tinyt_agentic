@@ -76,6 +76,15 @@ class FocusGroupApp {
             currentCard.classList.add('fade-in');
         }
 
+        // Update stepper
+        for (let i = 0; i <= 4; i++) {
+            const indicator = document.getElementById(`step-indicator-${i}`);
+            if (indicator) {
+                if (i <= stepNumber) indicator.classList.add('active');
+                else indicator.classList.remove('active');
+            }
+        }
+
         // Scroll to step
         if (stepNumber > 0) {
             currentCard.scrollIntoView({ behavior: 'smooth' });
