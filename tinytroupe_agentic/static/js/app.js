@@ -13,6 +13,7 @@ class FocusGroupApp {
     init() {
         this.bindEvents();
         this.showStep(0);
+        this.initTheme();
     }
 
     bindEvents() {
@@ -58,6 +59,12 @@ class FocusGroupApp {
                 this.askQuestion();
             }
         });
+
+        // Theme toggle
+        const toggle = document.getElementById('theme-toggle');
+        if (toggle) {
+            toggle.addEventListener('click', () => this.toggleTheme());
+        }
     }
 
     showStep(stepNumber) {
@@ -88,6 +95,32 @@ class FocusGroupApp {
         // Scroll to step
         if (stepNumber > 0) {
             currentCard.scrollIntoView({ behavior: 'smooth' });
+        }
+    }
+
+    initTheme() {
+        const saved = localStorage.getItem('fg_theme');
+        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const theme = saved || (prefersDark ? 'dark' : 'light');
+        this.applyTheme(theme);
+    }
+
+    toggleTheme() {
+        const current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+        const next = current === 'dark' ? 'light' : 'dark';
+        this.applyTheme(next);
+        localStorage.setItem('fg_theme', next);
+    }
+
+    applyTheme(theme) {
+        if (theme === 'dark') {
+            document.documentElement.setAttribute('data-theme', 'dark');
+        } else {
+            document.documentElement.removeAttribute('data-theme');
+        }
+        const btn = document.getElementById('theme-toggle');
+        if (btn) {
+            btn.innerHTML = theme === 'dark' ? '<i class="fas fa-sun me-2"></i> Light Mode' : '<i class="fas fa-moon me-2"></i> Dark Mode';
         }
     }
 
